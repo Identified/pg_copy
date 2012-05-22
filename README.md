@@ -7,6 +7,15 @@ COPY support for faster bulk insertion of data.
 It is assumed that you wish to create instances of the base class
 called from, and you must provide an Array of Hashes to be inserted.
 
+Installing
+======
+
+Add this to your Gemfile:
+
+```
+gem 'pg_copy', git: 'git@github.com:Identified/pg_copy.git'
+```
+
 Example
 =======
 
