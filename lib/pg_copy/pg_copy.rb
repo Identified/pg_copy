@@ -30,7 +30,7 @@ module PgCopy
 
         Tempfile.open('sql_buffer') do |file_handle|
           rows.each do |row|
-            line = CSV.generate_line(get_attributes(row, given_attrs)) + "\n"
+            line = CSV.generate_line(get_attributes(row, given_attrs))
             file_handle.write line
           end
 
@@ -43,7 +43,7 @@ module PgCopy
             ActiveRecord::Base.connection.raw_connection.put_copy_end
             ActiveRecord::Base.connection.raw_connection.get_last_result
           end
-          ActiveRecord::Base.connection.log_info "#{rows.length} rows", "COPY #{table_name}", ms
+          ActiveRecord::Base.connection.logger.info ["#{rows.length} rows", "COPY #{table_name}", ms].join(", ")
         end
       end
     end
