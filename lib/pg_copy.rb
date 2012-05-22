@@ -1,2 +1,2 @@
 # Include hook code here
-require 'pg_copy'
+require 'pg_copy/pg_copy'
