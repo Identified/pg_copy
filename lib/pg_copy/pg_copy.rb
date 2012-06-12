@@ -22,6 +22,19 @@ module PgCopy
 
       if rows and rows.any?
         given_attrs = rows.first.keys
+        if given_attrs.include?('id')
+          has_nil = rows.first['id'].nil?
+          given_attrs.delete('id') if has_nil
+          rows.map! do |row|
+            if row['id'].nil?
+              row.delete('id')
+            end
+            if row['id'].nil? != has_nil
+              raise "ALL IDs must be nil or all IDs must be not nil"
+            end
+            row
+          end
+        end
 
         # Be sure that we retrieve attributes in the correct order.
         def get_attributes(row, given_attrs)
