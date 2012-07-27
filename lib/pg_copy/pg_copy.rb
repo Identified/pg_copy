@@ -7,6 +7,57 @@ module PgCopy
   end
 
   module ClassMethods
+
+    def reserve_ids limit = 1
+      self.on_master.connection.execute("select nextval('#{self.table_name}_id_seq'::regclass) from generate_series(1, #{limit})").map{|r| r["nextval"]}
+    end
+
+    def bulk_create
+      Thread.current[:bulk_create] ||= {}
+      bulk_create_klass_count = Thread.current[:bulk_create].keys.length
+      begin
+        Thread.current[:bulk_create][self] ||= []
+        ActiveRecord::Persistence.class_eval do
+          alias :old_create :create
+          def create
+            if Thread.current[:bulk_create].select{|k,v| self.is_a?(k)}.any?
+              Thread.current[:bulk_create][self.class] ||= []
+              Thread.current[:bulk_create][self.class] << self unless @bulk_created
+              @bulk_created = true
+            else
+              old_create
+            end
+          end
+        end
+
+        self.transaction do
+          yield
+
+          Thread.current[:bulk_create] = Thread.current[:bulk_create].delete_if do |klass, rows|
+              klass.pg_copy(rows.map(&:attributes)) if rows.any? and rows.first.is_a?(self)
+          end
+        end
+
+        ActiveRecord::Persistence.class_eval do
+          alias :create     :old_create
+        end
+
+      ensure
+        Thread.current[:bulk_create] = Thread.current[:bulk_create].delete_if do |klass, rows|
+          if self == klass or (rows.any? and rows.first.is_a?(self))
+            true
+          else
+            false
+          end
+        end
+      end
+
+      if bulk_create_klass_count != Thread.current[:bulk_create].keys.length
+        raise "PgCopy#bulk_create run in class #{self}, expected bulk_create_klass_count to equal #{bulk_create_klass_count} but was #{Thread.current[:bulk_create].keys.length}"
+      end
+
+    end
+
     # Rows should be an array of hashes, each hash should contain the
     # same keys, the first element in the array will be used to
     # deterimine the keys for copying.  The values in the other hashes
@@ -21,16 +72,12 @@ module PgCopy
       end
 
       if rows and rows.any?
-        given_attrs = rows.first.keys
-        if given_attrs.include?('id')
-          has_nil = rows.first['id'].nil?
-          given_attrs.delete('id') if has_nil
+        with_id = rows.select{|r| r['id']}
+        without_id = rows.select{|r| r['id'].nil?}
+        if without_id.any?
           rows.map! do |row|
             if row['id'].nil?
               row.delete('id')
-            end
-            if row['id'].nil? != has_nil
-              raise "ALL IDs must be nil or all IDs must be not nil"
             end
             row
           end
@@ -40,23 +87,27 @@ module PgCopy
         def get_attributes(row, given_attrs)
           given_attrs.collect { |x| row[x] }
         end
+        [with_id, without_id].each do |row_set|
+          if row_set.any?
+            given_attrs = row_set.first.keys
+            Tempfile.open('sql_buffer') do |file_handle|
+              row_set.each do |row|
+                line = CSV.generate_line(get_attributes(row, given_attrs))
+                file_handle.write line
+              end
 
-        Tempfile.open('sql_buffer') do |file_handle|
-          rows.each do |row|
-            line = CSV.generate_line(get_attributes(row, given_attrs))
-            file_handle.write line
+              file_handle.close
+              table_name = self.table_name
+              copy_string = "copy #{table_name} (#{given_attrs.join(', ')}) from stdin csv"
+              ms = Benchmark.ms  do
+                ActiveRecord::Base.connection.execute copy_string
+                ActiveRecord::Base.connection.raw_connection.put_copy_data file_handle.open.read
+                ActiveRecord::Base.connection.raw_connection.put_copy_end
+                ActiveRecord::Base.connection.raw_connection.get_last_result
+              end
+              ActiveRecord::Base.connection.logger.info ["#{rows.length} rows", "COPY #{table_name}", ms].join(", ")
+            end
           end
-
-          file_handle.close
-          table_name = self.table_name
-          copy_string = "copy #{table_name} (#{given_attrs.join(', ')}) from stdin csv"
-          ms = Benchmark.ms  do
-            ActiveRecord::Base.connection.execute copy_string
-            ActiveRecord::Base.connection.raw_connection.put_copy_data file_handle.open.read
-            ActiveRecord::Base.connection.raw_connection.put_copy_end
-            ActiveRecord::Base.connection.raw_connection.get_last_result
-          end
-          ActiveRecord::Base.connection.logger.info ["#{rows.length} rows", "COPY #{table_name}", ms].join(", ")
         end
       end
     end
