@@ -58,6 +58,61 @@ module PgCopy
 
     end
 
+    def bulk_destroy
+      Thread.current[:bulk_destroy] ||= {}
+      bulk_destroy_klass_count = Thread.current[:bulk_destroy].keys.length
+      begin
+        Thread.current[:bulk_destroy][self] ||= []
+        ActiveRecord::Persistence.class_eval do
+          private
+          # TODO: once we can upgrade to > rails 3.2.3, we can override "destroy_row" instead which will allow us to remove things marked below
+          alias :old_destroy :destroy
+          def destroy
+            if Thread.current[:bulk_destroy].select{|k,v| self.is_a?(k)}.any?
+              # TODO: remove based on above comment
+              destroy_associations
+
+              Thread.current[:bulk_destroy][self.class] ||= []
+              Thread.current[:bulk_destroy][self.class] << self unless @bulk_destroyed
+              @bulk_destroyed = true
+
+              # TODO: remove based on above comment
+              @destroyed = true
+              freeze
+            else
+              old_destroy
+            end
+          end
+        end
+
+        self.transaction do
+          yield
+
+          Thread.current[:bulk_destroy] = Thread.current[:bulk_destroy].delete_if do |klass, rows|
+              klass.delete_all(:id => rows.map(&:id)) if rows.any? and rows.first.is_a?(self)
+          end
+        end
+
+        ActiveRecord::Persistence.class_eval do
+          alias :destroy     :old_destroy
+        end
+
+      ensure
+        Thread.current[:bulk_destroy] = Thread.current[:bulk_destroy].delete_if do |klass, rows|
+          if self == klass or (rows.any? and rows.first.is_a?(self))
+            true
+          else
+            false
+          end
+        end
+      end
+
+      if bulk_destroy_klass_count != Thread.current[:bulk_destroy].keys.length
+        raise "PgCopy#bulk_destroy run in class #{self}, expected bulk_destroy_klass_count to equal #{bulk_destroy_klass_count} but was #{Thread.current[:bulk_destroy].keys.length}"
+      end
+
+    end
+
     # Rows should be an array of hashes, each hash should contain the
     # same keys, the first element in the array will be used to
     # deterimine the keys for copying.  The values in the other hashes
