@@ -137,10 +137,13 @@ module PgCopy
             row
           end
         end
-
+        @serialized_attributes_keys = serialized_attributes.keys
         # Be sure that we retrieve attributes in the correct order.
         def get_attributes(row, given_attrs)
-          given_attrs.collect { |x| row[x] }
+          given_attrs.collect do |x|
+            row[x] = serialized_attributes[x].dump(row[x]) if @serialized_attributes_keys.include? x
+            row[x]
+          end
         end
         [with_id, without_id].each do |row_set|
           if row_set.any?
