@@ -44,11 +44,7 @@ module PgCopy
 
       ensure
         Thread.current[:bulk_create] = Thread.current[:bulk_create].delete_if do |klass, rows|
-          if self == klass or (rows.any? and rows.first.is_a?(self))
-            true
-          else
-            false
-          end
+          self == klass or klass.ancestors.include?(self)
         end
       end
 
@@ -99,11 +95,7 @@ module PgCopy
 
       ensure
         Thread.current[:bulk_destroy] = Thread.current[:bulk_destroy].delete_if do |klass, rows|
-          if self == klass or (rows.any? and rows.first.is_a?(self))
-            true
-          else
-            false
-          end
+          self == klass or klass.ancestors.include?(self)
         end
       end
 
