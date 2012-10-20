@@ -9,7 +9,7 @@ module PgCopy
   module ClassMethods
 
     def reserve_ids limit = 1
-      self.on_master.connection.execute("select nextval('#{self.table_name}_id_seq'::regclass) from generate_series(1, #{limit})").map{|r| r["nextval"]}
+      self.connection.execute("select nextval('#{self.table_name}_id_seq'::regclass) from generate_series(1, #{limit})").map{|r| r["nextval"]}
     end
 
     def bulk_create
